@@ -1,0 +1,7 @@
+pycache/
+*.pyc
+.env
+build/
+dist/
+*.spec
+*.xlsx
