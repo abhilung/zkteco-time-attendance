@@ -1,4 +1,4 @@
-pycache/
+_pycache_/
 *.pyc
 .env
 build/
