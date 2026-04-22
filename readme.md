@@ -1,4 +1,4 @@
-# ZKTeco Attendance Report Tool
+# ZKTeco Attendance Report Tool (Finger-print)
 
 A Python-based tool to extract attendance data from ZKTeco biometric machines and generate monthly Excel reports with minimal user interaction.
 

@@ -1,6 +1,7 @@
 # ZKteco attendance machine report
 
 import os
+import sys
 import time
 from zk import ZK, const
 import datetime
@@ -106,11 +107,6 @@ def export_all_staff_to_excel():
             operation_name="Fetching attendance logs",
         )
 
-        attendance_by_user = defaultdict(list)
-                
-        for att in attendance:
-            attendance_by_user[att.user_id].append(att)
-
         print(f"\n--- USERS ({len(users)}) ---")
         for user in users:
             print(f"User ID: {user.user_id} | Name: {user.name}")
@@ -119,24 +115,84 @@ def export_all_staff_to_excel():
         print("--------------------------------\n")
 
         # -------------------------------
-        # ASK MONTH
+        # Make a list of 6 month range from present from only which is reports are generated.
+        # ASK MONTH to user
         # -------------------------------
-        try:
-            target_month_nep = int(input("Enter Nepali Month number (1-12): "))
-            if not 1 <= target_month_nep <= 12:
-                print("Invalid month. Must be between 1 and 12.")
-                return
-        except ValueError:
-            print("Invalid input. Month must be a number.")
-            return
+        def get_possible_months():
+            today = nepali_datetime.date.today()
+            current_month = today.month
+            current_year = today.year
+            
+            possible_months = []
+            for i in range(6):
+                possible_months.append({"year": current_year, "month": current_month})
+                current_month -= 1
+                if current_month == 0:
+                    current_month = 12
+                    current_year -= 1
+            return possible_months
 
-        today_nepali = nepali_datetime.datetime.now()
-        target_year_nep = today_nepali.year
-        month_name = nepali_datetime.date(
-            target_year_nep, target_month_nep, 1
-        ).strftime('%B')
+        def get_user_input(possible_months):
+            # Mapping numbers to Nepali Month Names
+            month_names = {
+                1: "Baisakh", 2: "Jestha", 3: "Ashad", 4: "Shrawan",
+                5: "Bhadra", 6: "Ashwin", 7: "Kartik", 8: "Mangsir",
+                9: "Poush", 10: "Magh", 11: "Falgun", 12: "Chaitra"
+            }
 
-        print(f"Processing attendance for {month_name} {target_year_nep} BS...\n")
+            user_raw = input("Enter a nepali month number (1-12): ")
+            
+            try:
+                target_month = int(user_raw)
+                
+                if not (1 <= target_month <= 12):
+                    print("Invalid Input!!!")
+                    sys.exit()
+
+                # Check if the month is in our allowed list
+                # We find the entry to get the correct year associated with that month
+                match = next((item for item in possible_months if item['month'] == target_month), None)
+
+                if match:
+                    month_name = month_names[target_month]
+                    return {
+                        "month_number": target_month,
+                        "month_name": month_name,
+                        "year": match['year']
+                    }
+                else:
+                    # Generate a helpful error message showing the allowed range
+                    print(f"{month_names[target_month]} Month report is outside the range.")
+                    sys.exit()
+
+            except ValueError:
+                print("Invalid Input!!!")
+                sys.exit()
+
+        # Execution
+        today_nep = nepali_datetime.date.today()
+        allowed_months = get_possible_months()
+        selected = get_user_input(allowed_months)
+
+        month_number = selected['month_number']
+        month_name = selected['month_name']
+        year = selected['year']
+
+        print(f"Processing attendance for {month_name} {year} BS...\n")
+
+        # PRE-FILTER: Create a tiny list of only the logs for the target month/year
+        filtered_attendance = []
+        for att in attendance:
+            # Convert timestamp to BS date just once
+            date_bs = nepali_datetime.date.from_datetime_date(att.timestamp.date())
+            if date_bs.year == year and date_bs.month == month_number:         
+                filtered_attendance.append(att)
+                
+        # Group by user
+        attendance_by_user = defaultdict(list)
+                
+        for att in filtered_attendance:
+            attendance_by_user[att.user_id].append(att)
 
         # Disable device AFTER info & input
         conn.disable_device()
@@ -145,12 +201,13 @@ def export_all_staff_to_excel():
         # LAST DAY OF NEPALI MONTH
         # -------------------------------
         last_day_nep = 32
-        while last_day_nep > 28:
+        for d in range(32, 28, -1):
             try:
-                nepali_datetime.date(target_year_nep, target_month_nep, last_day_nep)
+                nepali_datetime.date(year, month_number, d)
+                last_day_nep = d
                 break
             except ValueError:
-                last_day_nep -= 1
+                continue
 
         base_file_name = f"{month_name}_attendance_report"
         file_name = get_unique_filename(SAVE_DIR, base_file_name)
@@ -169,8 +226,8 @@ def export_all_staff_to_excel():
                     )
 
                     if (
-                        date_bs.year == target_year_nep
-                        and date_bs.month == target_month_nep
+                        date_bs.year == year
+                        and date_bs.month == month_number
                     ):
                         user_attendance_map.setdefault(date_bs.day, {
                             "in": [],
@@ -221,7 +278,7 @@ def export_all_staff_to_excel():
                 ws[f"B{INFO_START_ROW+1}"] = user.user_id
 
                 ws[f"A{INFO_START_ROW+2}"] = "Report Month:"
-                ws[f"B{INFO_START_ROW+2}"] = f"{month_name} {target_year_nep} BS"
+                ws[f"B{INFO_START_ROW+2}"] = f"{month_name} {year} BS"
 
                 for r in range(INFO_START_ROW, INFO_START_ROW + 3):
                     ws[f"A{r}"].font = bold_font
@@ -232,10 +289,10 @@ def export_all_staff_to_excel():
                 # -------------------------------
                 for day in range(1, last_day_nep + 1):
                     current_row = TABLE_HEADER_ROW + day
-                    date_label = f"{target_year_nep}-{target_month_nep:02d}-{day:02d}"
+                    date_label = f"{year}-{month_number:02d}-{day:02d}"
 
                     day_name = nepali_datetime.date(
-                        target_year_nep, target_month_nep, day
+                        year, month_number, day
                     ).strftime("%A")
 
                     # This formula is the "brain". It checks if F and G are numbers.
@@ -248,13 +305,13 @@ def export_all_staff_to_excel():
                     ws[f"D{current_row}"] = date_label
                     ws[f"E{current_row}"] = day_name
                     ws[f"H{current_row}"] = row_formula # Apply formula to every single row
-                    ws[f"H{current_row}"].number_format = "h:mm"
+                    ws[f"H{current_row}"].number_format = "[h]:mm"
 
                     is_future = (
-                        (target_year_nep, target_month_nep, day)
-                        > (today_nepali.year, today_nepali.month, today_nepali.day)
+                        (year == today_nep.year and month_number == today_nep.month and day > today_nep.day) or
+                        (year == today_nep.year and month_number > today_nep.month) or
+                        (year > today_nep.year)
                     )
-
                     if is_future:
                         # Leave In/Out blank for future dates
                         pass 
@@ -283,7 +340,6 @@ def export_all_staff_to_excel():
                             ws[f"{col}{current_row}"].fill = off_fill
 
                     ws[f"I{current_row}"] = ""
-
 
                 # -------------------------------
                 # SUMMARY
@@ -326,8 +382,8 @@ def export_all_staff_to_excel():
                             else center_align
                         )
 
-        if "Sheet" in writer.book.sheetnames:
-            del writer.book["Sheet"]
+            if "Sheet" in writer.book.sheetnames:
+                del writer.book["Sheet"]
 
         print(f"\nReport saved: {file_name}")
 
@@ -336,8 +392,13 @@ def export_all_staff_to_excel():
 
     finally:
         if conn:
-            conn.enable_device()
-            conn.disconnect()
+            print("\nClosing connection...")
+            try:
+                conn.enable_device()
+                conn.disconnect()
+                print("Disconnected safely.")
+            except Exception as cleanup_error:
+                print(f"Note: Could not reach device for final disconnect: {cleanup_error}")
 
 if __name__ == "__main__":
     export_all_staff_to_excel()
